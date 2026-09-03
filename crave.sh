@@ -1,370 +1,202 @@
 #!/bin/bash
 
-set -o pipefail
+set -Eeuo pipefail
 
 # ============================================================
-#                    SHINKAI BUILD SCRIPT
-# ============================================================
-#
-# ROM      : Shinkai Project
-# Device   : Xiaomi Mi 11 Lite 4G (courbet)
-# Branch   : hekkaideka
-#
-# BUILD=false -> Sync only
-# BUILD=true  -> Sync + clone trees + build + upload
-#
-# Telegram:
-export TG_TOKEN="8613137322:AAH3ziSjfOmZqNM-5yh1H5csWFYJv0107KM"
-export TG_CHAT_ID="7540957411"
-#
-# PixelDrain:
-export PIXELDRAIN_API_KEY="4f177dc3-e153-4af6-b105-2d25e21740c5"
-#
-# ============================================================
-
-
-# ============================================================
-# ROM CONFIGURATION
+# Shinkai Project - Crave Build Script
+# Device : Xiaomi Mi 11 Lite 4G (courbet)
+# Branch : hekkaideka
+# Build  : userdebug
 # ============================================================
 
 ROM_NAME="Shinkai"
-
 ROM_URL="https://github.com/Shinkaiprjkt/manifest.git"
 ROM_BRANCH="hekkaideka"
 
 DEVICE="courbet"
 BUILD_VARIANT="userdebug"
 
-# ------------------------------------------------------------
-# Build switch
-# ------------------------------------------------------------
-
-BUILD=true
-
 # ============================================================
-# ENVIRONMENT
+# Environment
 # ============================================================
 
 export TZ="Asia/Jakarta"
-
 export BUILD_USERNAME="Aciss21"
 export BUILD_HOSTNAME="crave"
 
 # ============================================================
-# TELEGRAM
+# Telegram
 # ============================================================
 
-TELEGRAM=true
-
+TELEGRAM="${TELEGRAM:-true}"
 TG_TOKEN="${TG_TOKEN:-}"
 TG_CHAT_ID="${TG_CHAT_ID:-}"
 
 # ============================================================
-# PIXELDRAIN
+# PixelDrain
 # ============================================================
 
-PIXELDRAIN=true
-
+PIXELDRAIN="${PIXELDRAIN:-true}"
 PIXELDRAIN_API_KEY="${PIXELDRAIN_API_KEY:-}"
 
 # ============================================================
-# COLORS
+# Colors
 # ============================================================
 
-RESET='\033[0m'
-RED='\033[31m'
-GREEN='\033[32m'
-YELLOW='\033[33m'
-BLUE='\033[34m'
-CYAN='\033[36m'
-MAGENTA='\033[35m'
-BOLD='\033[1m'
-
-
-# ============================================================
-# HELPER FUNCTIONS
-# ============================================================
-
-section() {
-
-    echo
-    echo -e "${CYAN}${BOLD}"
-    echo "╔════════════════════════════════════════════════════════════╗"
-    printf "║  %-56s║\n" "$1"
-    echo "╚════════════════════════════════════════════════════════════╝"
-    echo -e "${RESET}"
-}
-
+cyan='\033[0;36m'
+green='\033[0;32m'
+yellow='\033[1;33m'
+red='\033[0;31m'
+reset='\033[0m'
 
 info() {
-
-    echo -e "${BLUE}ℹ${RESET} $1"
+    echo -e "${cyan}ℹ ${1}${reset}"
 }
-
 
 ok() {
-
-    echo -e "${GREEN}✔${RESET} $1"
+    echo -e "${green}✔ ${1}${reset}"
 }
-
 
 warn() {
-
-    echo -e "${YELLOW}⚠${RESET} $1"
+    echo -e "${yellow}⚠ ${1}${reset}"
 }
 
-
-fail() {
-
-    echo -e "${RED}✖${RESET} $1"
+error() {
+    echo -e "${red}✖ ${1}${reset}"
 }
 
+section() {
+    echo
+    echo "============================================================"
+    echo " ${1}"
+    echo "============================================================"
+    echo
+}
 
 # ============================================================
-# TELEGRAM FUNCTION
+# Error Handler
 # ============================================================
 
-send_telegram() {
+BUILD_START=$(date +%s)
 
-    [[ "${TELEGRAM}" != "true" ]] && return 0
-    [[ -z "${TG_TOKEN}" ]] && return 0
-    [[ -z "${TG_CHAT_ID}" ]] && return 0
+on_error() {
+    local exit_code=$?
+    local line_no=$1
 
-    local MESSAGE="$1"
+    error "Build failed"
+    error "Exit code : ${exit_code}"
+    error "Line      : ${line_no}"
+
+    telegram_message \
+        "❌ *Shinkai build failed*
+
+Device: \`${DEVICE}\`
+Branch: \`${ROM_BRANCH}\`
+Variant: \`${BUILD_VARIANT}\`
+Exit code: \`${exit_code}\`
+Line: \`${line_no}\`"
+
+    exit "${exit_code}"
+}
+
+trap 'on_error ${LINENO}' ERR
+
+# ============================================================
+# Telegram
+# ============================================================
+
+telegram_message() {
+    [[ "${TELEGRAM}" == "true" ]] || return 0
+    [[ -n "${TG_TOKEN}" ]] || return 0
+    [[ -n "${TG_CHAT_ID}" ]] || return 0
 
     curl -fsS \
-        --max-time 15 \
+        --max-time 20 \
         -X POST \
         "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-        -d "chat_id=${TG_CHAT_ID}" \
-        --data-urlencode "text=${MESSAGE}" \
+        --data-urlencode "chat_id=${TG_CHAT_ID}" \
+        --data-urlencode "parse_mode=Markdown" \
+        --data-urlencode "text=${1}" \
         >/dev/null 2>&1 || true
 }
 
-
 # ============================================================
-# ERROR HANDLER
-# ============================================================
-
-error_handler() {
-
-    local EXIT_CODE=$?
-
-    fail "Script exited with status ${EXIT_CODE}"
-
-    send_telegram \
-        "❌ ${ROM_NAME} failed
-
-Device: ${DEVICE}
-Branch: ${ROM_BRANCH}
-Status: Failed
-Exit code: ${EXIT_CODE}"
-
-    exit "${EXIT_CODE}"
-}
-
-
-trap error_handler ERR
-
-
-# ============================================================
-# BANNER
-# ============================================================
-
-banner() {
-
-    clear 2>/dev/null || true
-
-    echo -e "${CYAN}${BOLD}"
-
-    echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║                                                            ║"
-    echo "║                    S H I N K A I                           ║"
-    echo "║                                                            ║"
-    echo "║                 Automated Build Script                     ║"
-    echo "║                                                            ║"
-    echo "╠════════════════════════════════════════════════════════════╣"
-    echo "║  Device     : Xiaomi Mi 11 Lite 4G / courbet              ║"
-    echo "║  Branch     : hekkaideka                                   ║"
-    echo "║  Variant    : userdebug                                    ║"
-    echo "║  Target     : m shinkai                                    ║"
-    echo "║  Server     : Crave                                        ║"
-    echo "╚════════════════════════════════════════════════════════════╝"
-
-    echo -e "${RESET}"
-}
-
-
-# ============================================================
-# DEPENDENCY CHECK
+# Dependencies
 # ============================================================
 
 check_dependencies() {
-
     section "Checking Dependencies"
 
-    local MISSING=0
+    local deps=(
+        git
+        repo
+        curl
+    )
 
-    for COMMAND in git repo curl; do
-
-        if command -v "${COMMAND}" >/dev/null 2>&1; then
-
-            ok "${COMMAND}: $(command -v "${COMMAND}")"
-
+    for cmd in "${deps[@]}"; do
+        if command -v "${cmd}" >/dev/null 2>&1; then
+            ok "${cmd}"
         else
-
-            fail "${COMMAND} is not installed"
-
-            MISSING=1
-
+            error "Missing dependency: ${cmd}"
+            exit 1
         fi
-
     done
-
-    if [[ "${MISSING}" -eq 1 ]]; then
-
-        fail "Missing required dependencies"
-
-        exit 1
-
-    fi
-
-    ok "Dependencies ready"
 }
 
-
 # ============================================================
-# CRAVE CHECK
+# Crave Environment
 # ============================================================
 
 check_crave() {
-
     section "Checking Crave Environment"
 
-    if [[ -x "/opt/crave/resync.sh" ]]; then
-
-        ok "Crave resync detected"
-
-    else
-
-        warn "/opt/crave/resync.sh not found"
-        warn "Fallback to repo sync will be used"
-
+    if [[ ! -x "/opt/crave/resync.sh" ]]; then
+        error "/opt/crave/resync.sh not found"
+        error "This script must run inside a Crave build job."
+        error "Do NOT run repo sync directly inside Devspace."
+        exit 1
     fi
+
+    ok "Crave resync detected"
 }
 
-
 # ============================================================
-# WORKSPACE CHECK
+# Workspace
 # ============================================================
 
 check_workspace() {
-
     section "Checking Workspace"
 
-    if [[ ! -w "." ]]; then
-
-        fail "Current directory is not writable"
-
-        exit 1
-
-    fi
-
-    if [[ -d ".repo" ]]; then
-
-        info "Existing repo workspace detected"
-
-    else
-
+    if [[ ! -d ".repo" ]]; then
         info "Fresh repo workspace"
-
+    else
+        info "Existing repo workspace detected"
     fi
 
     ok "Workspace ready"
-}
 
-
-# ============================================================
-# TELEGRAM CHECK
-# ============================================================
-
-check_telegram() {
-
-    if [[ "${TELEGRAM}" != "true" ]]; then
-
-        warn "Telegram notifications disabled"
-
-        return 0
-
+    if [[ "${TELEGRAM}" == "true" ]]; then
+        ok "Telegram notifications enabled"
+    else
+        info "Telegram notifications disabled"
     fi
 
-    if [[ -z "${TG_TOKEN}" || -z "${TG_CHAT_ID}" ]]; then
-
-        warn "Telegram credentials are not set"
-        warn "Telegram notifications disabled"
-
-        return 0
-
+    if [[ "${PIXELDRAIN}" == "true" ]]; then
+        ok "PixelDrain upload enabled"
+    else
+        info "PixelDrain upload disabled"
     fi
-
-    ok "Telegram notifications enabled"
 }
 
-
 # ============================================================
-# PIXELDRAIN CHECK
-# ============================================================
-
-check_pixeldrain() {
-
-    if [[ "${PIXELDRAIN}" != "true" ]]; then
-
-        warn "PixelDrain upload disabled"
-
-        return 0
-
-    fi
-
-    if [[ -z "${PIXELDRAIN_API_KEY}" ]]; then
-
-        warn "PixelDrain API key is not set"
-        warn "PixelDrain upload disabled"
-
-        return 0
-
-    fi
-
-    ok "PixelDrain upload enabled"
-}
-
-
-# ============================================================
-# START NOTIFICATION
-# ============================================================
-
-notify_start() {
-
-    send_telegram \
-        "🚀 ${ROM_NAME} build started
-
-Device: ${DEVICE}
-Branch: ${ROM_BRANCH}
-Variant: ${BUILD_VARIANT}
-Build mode: ${BUILD}"
-
-}
-
-
-# ============================================================
-# REPO INIT
+# Repo Init
 # ============================================================
 
 repo_init() {
-
     section "Initializing ${ROM_NAME}"
 
     info "Manifest: ${ROM_URL}"
-    info "Branch:   ${ROM_BRANCH}"
+    info "Branch: ${ROM_BRANCH}"
 
     repo init \
         --depth=1 \
@@ -375,88 +207,32 @@ repo_init() {
     ok "${ROM_NAME} repository initialized"
 }
 
-
 # ============================================================
-# SOURCE SYNC
+# Source Sync
 # ============================================================
 
 sync_source() {
-
     section "Syncing ${ROM_NAME} Source"
 
-    local SYNC_START
-    local SYNC_END
-    local SYNC_SECONDS
-    local SYNC_MINUTES
+    info "Using Crave resync"
 
-    SYNC_START=$(date +%s)
+    /opt/crave/resync.sh
 
-    if [[ -x "/opt/crave/resync.sh" ]]; then
-
-        info "Using Crave resync"
-
-        if /opt/crave/resync.sh; then
-
-            ok "Crave resync completed"
-
-        else
-
-            warn "Crave resync failed"
-            warn "Falling back to repo sync"
-
-            repo sync \
-                --force-sync \
-                --no-clone-bundle \
-                --no-tags
-
-        fi
-
-    else
-
-        warn "Crave resync not found"
-        info "Using repo sync"
-
-        repo sync \
-            --force-sync \
-            --no-clone-bundle \
-            --no-tags
-
-    fi
-
-    SYNC_END=$(date +%s)
-
-    SYNC_SECONDS=$((SYNC_END - SYNC_START))
-    SYNC_MINUTES=$((SYNC_SECONDS / 60))
-
-    ok "Source sync completed"
-    info "Sync time: ${SYNC_MINUTES} minutes"
-
-    send_telegram \
-        "📥 ${ROM_NAME} source synced
-
-Device: ${DEVICE}
-Branch: ${ROM_BRANCH}
-Sync time: ${SYNC_MINUTES} minutes
-
-Source is ready."
-
+    ok "Shinkai source synced"
 }
 
-
 # ============================================================
-# CLONE DEVICE TREES
+# Device Trees
 # ============================================================
 
 clone_trees() {
-
     section "Cloning Courbet Device Trees"
 
-
     # --------------------------------------------------------
-    # Device Common
+    # Device common
     # --------------------------------------------------------
 
-    info "Cloning device Xiaomi SM6150 common"
+    info "Cloning Xiaomi SM6150 common device tree"
 
     git clone \
         --depth=1 \
@@ -464,12 +240,13 @@ clone_trees() {
         https://github.com/Aciss21/device_xiaomi_sm6150-common.git \
         device/xiaomi/sm6150-common
 
+    ok "device/xiaomi/sm6150-common"
 
     # --------------------------------------------------------
-    # Vendor Common
+    # Vendor common
     # --------------------------------------------------------
 
-    info "Cloning vendor Xiaomi SM6150 common"
+    info "Cloning Xiaomi SM6150 common vendor tree"
 
     git clone \
         --depth=1 \
@@ -477,25 +254,27 @@ clone_trees() {
         https://github.com/Aciss21/vendor_xiaomi_sm6150-common.git \
         vendor/xiaomi/sm6150-common
 
+    ok "vendor/xiaomi/sm6150-common"
 
     # --------------------------------------------------------
-    # Device
+    # Device courbet
     # --------------------------------------------------------
 
-    info "Cloning Courbet device tree"
+    info "Cloning Xiaomi courbet device tree"
 
     git clone \
         --depth=1 \
-        -b shin \
+        -b 16.2 \
         https://github.com/Aciss21/device_xiaomi_courbet.git \
         device/xiaomi/courbet
 
+    ok "device/xiaomi/courbet"
 
     # --------------------------------------------------------
-    # Vendor
+    # Vendor courbet
     # --------------------------------------------------------
 
-    info "Cloning Courbet vendor"
+    info "Cloning Xiaomi courbet vendor tree"
 
     git clone \
         --depth=1 \
@@ -503,12 +282,13 @@ clone_trees() {
         https://github.com/Aciss21/vendor_xiaomi_courbet.git \
         vendor/xiaomi/courbet
 
+    ok "vendor/xiaomi/courbet"
 
     # --------------------------------------------------------
     # Kernel
     # --------------------------------------------------------
 
-    info "Cloning SM6150 kernel"
+    info "Cloning Xiaomi SM6150 kernel"
 
     git clone \
         --depth=1 \
@@ -516,9 +296,10 @@ clone_trees() {
         https://github.com/Aciss21/kernel_xiaomi_sm6150.git \
         kernel/xiaomi/sm6150
 
+    ok "kernel/xiaomi/sm6150"
 
     # --------------------------------------------------------
-    # Xiaomi Hardware
+    # Hardware Xiaomi
     # --------------------------------------------------------
 
     info "Cloning Xiaomi hardware"
@@ -529,6 +310,7 @@ clone_trees() {
         https://github.com/LineageOS/android_hardware_xiaomi.git \
         hardware/xiaomi
 
+    ok "hardware/xiaomi"
 
     # --------------------------------------------------------
     # MIUI Camera
@@ -542,9 +324,10 @@ clone_trees() {
         https://github.com/Aciss21/vendor_miuicamera-courbet.git \
         vendor/miuicamera-courbet
 
+    ok "vendor/miuicamera-courbet"
 
     # --------------------------------------------------------
-    # Sony Dolby
+    # Sony Dolby blobs
     # --------------------------------------------------------
 
     info "Cloning Sony Dolby vendor"
@@ -554,6 +337,7 @@ clone_trees() {
         https://github.com/manipvlator/proprietary_vendor_sony_dolby.git \
         vendor/sony/dolby
 
+    ok "vendor/sony/dolby"
 
     # --------------------------------------------------------
     # Lunaris Dolby
@@ -566,529 +350,201 @@ clone_trees() {
         https://github.com/manipvlator/android_packages_apps_LunarisDolby.git \
         packages/apps/LunarisDolby
 
+    ok "packages/apps/LunarisDolby"
 
-    ok "All device trees cloned"
+    ok "All Courbet device trees cloned"
 }
 
-
 # ============================================================
-# TREE CHECK
-# ============================================================
-
-check_trees() {
-
-    section "Checking Device Trees"
-
-    local FAILED=0
-
-    local PATHS=(
-
-        "device/xiaomi/sm6150-common"
-        "device/xiaomi/courbet"
-
-        "vendor/xiaomi/sm6150-common"
-        "vendor/xiaomi/courbet"
-
-        "kernel/xiaomi/sm6150"
-
-        "hardware/xiaomi"
-
-        "vendor/miuicamera-courbet"
-
-        "vendor/sony/dolby"
-
-        "packages/apps/LunarisDolby"
-
-    )
-
-
-    for TREE in "${PATHS[@]}"; do
-
-        if [[ -d "${TREE}" ]]; then
-
-            ok "${TREE}"
-
-        else
-
-            fail "${TREE}"
-
-            FAILED=1
-
-        fi
-
-    done
-
-
-    if [[ "${FAILED}" -eq 1 ]]; then
-
-        fail "One or more device trees are missing"
-
-        exit 1
-
-    fi
-
-
-    ok "All required trees are present"
-}
-
-
-# ============================================================
-# BUILD ENVIRONMENT
-# ============================================================
-
-setup_build_environment() {
-
-    section "Loading Build Environment"
-
-    if [[ ! -f "build/envsetup.sh" ]]; then
-
-        fail "build/envsetup.sh not found"
-
-        exit 1
-
-    fi
-
-    source build/envsetup.sh
-
-    ok "Build environment loaded"
-}
-
-
-# ============================================================
-# BREAKFAST
-# ============================================================
-
-breakfast_device() {
-
-    section "Configuring Device"
-
-    info "Running: breakfast ${DEVICE}"
-
-    breakfast "${DEVICE}"
-
-    ok "Device configured"
-}
-
-
-# ============================================================
-# BUILD
+# Build
 # ============================================================
 
 build_rom() {
-
     section "Building ${ROM_NAME}"
 
-    local BUILD_START
-    local BUILD_END
-    local BUILD_SECONDS
-    local BUILD_MINUTES
+    info "Device  : ${DEVICE}"
+    info "Variant : ${BUILD_VARIANT}"
+    info "Target  : m shinkai"
 
-    BUILD_START=$(date +%s)
+    source build/envsetup.sh
 
+    ok "Build environment initialized"
 
-    send_telegram \
-        "🔨 ${ROM_NAME} compilation started
+    breakfast "${DEVICE}"
 
-Device: ${DEVICE}
-Target: m shinkai"
+    ok "Breakfast completed"
 
+    telegram_message \
+        "🚀 *Shinkai build started*
 
-    info "Target: m shinkai"
+Device: \`${DEVICE}\`
+Branch: \`${ROM_BRANCH}\`
+Variant: \`${BUILD_VARIANT}\`
+Target: \`m shinkai\`"
 
-
-    if m shinkai; then
-
-        BUILD_END=$(date +%s)
-
-        BUILD_SECONDS=$((BUILD_END - BUILD_START))
-        BUILD_MINUTES=$((BUILD_SECONDS / 60))
-
-
-        ok "${ROM_NAME} build successful"
-
-        info "Build time: ${BUILD_MINUTES} minutes"
-
-
-        send_telegram \
-            "✅ ${ROM_NAME} build successful
-
-Device: ${DEVICE}
-Target: m shinkai
-Build time: ${BUILD_MINUTES} minutes"
-
-
-    else
-
-        BUILD_END=$(date +%s)
-
-        BUILD_SECONDS=$((BUILD_END - BUILD_START))
-        BUILD_MINUTES=$((BUILD_SECONDS / 60))
-
-
-        fail "${ROM_NAME} build failed"
-
-        info "Build time: ${BUILD_MINUTES} minutes"
-
-
-        send_telegram \
-            "❌ ${ROM_NAME} build failed
-
-Device: ${DEVICE}
-Target: m shinkai
-Build time: ${BUILD_MINUTES} minutes"
-
-
-        exit 1
-
-    fi
+    m shinkai
 }
 
-
 # ============================================================
-# FIND ARTIFACT
+# Find Build Output
 # ============================================================
 
-find_artifact() {
+find_build_output() {
+    section "Searching Build Output"
 
-    section "Searching Build Artifact"
+    local product_dir="out/target/product/${DEVICE}"
 
-    local PRODUCT_DIR="out/target/product/${DEVICE}"
-
-    if [[ ! -d "${PRODUCT_DIR}" ]]; then
-
-        warn "Product directory not found:"
-        warn "${PRODUCT_DIR}"
-
-        return 0
-
+    if [[ ! -d "${product_dir}" ]]; then
+        error "Product directory not found: ${product_dir}"
+        return 1
     fi
 
+    BUILD_ZIP=$(find "${product_dir}" \
+        -maxdepth 1 \
+        -type f \
+        \( \
+            -iname "*.zip" \
+            -o \
+            -iname "*.img" \
+        \) \
+        -printf '%T@ %p\n' \
+        | sort -nr \
+        | head -1 \
+        | cut -d' ' -f2- || true)
 
-    local FOUND=0
-
-
-    while IFS= read -r FILE; do
-
-        FOUND=1
-
-        local NAME
-        local SIZE
-
-        NAME=$(basename "${FILE}")
-        SIZE=$(du -h "${FILE}" | cut -f1)
-
-
-        ok "Found: ${NAME}"
-
-        info "Size: ${SIZE}"
-        info "Path: ${FILE}"
-
-
-    done < <(
-
-        find "${PRODUCT_DIR}" \
-            -maxdepth 1 \
-            -type f \
-            -name "*.zip" \
-            ! -name "*target_files*" \
-            ! -name "*ota*" \
-            -print
-
-    )
-
-
-    if [[ "${FOUND}" -eq 0 ]]; then
-
-        warn "No ROM ZIP found"
-
+    if [[ -z "${BUILD_ZIP}" ]]; then
+        error "No build artifact found"
+        return 1
     fi
+
+    ok "Build artifact:"
+    echo "${BUILD_ZIP}"
 }
 
-
 # ============================================================
-# PIXELDRAIN UPLOAD
+# PixelDrain Upload
 # ============================================================
 
 upload_pixeldrain() {
+    [[ "${PIXELDRAIN}" == "true" ]] || return 0
 
-    section "Uploading to PixelDrain"
-
-
-    if [[ "${PIXELDRAIN}" != "true" ]]; then
-
-        warn "PixelDrain upload disabled"
-
-        return 0
-
-    fi
-
+    section "Uploading To PixelDrain"
 
     if [[ -z "${PIXELDRAIN_API_KEY}" ]]; then
-
-        warn "PixelDrain API key is not configured"
-
+        warn "PixelDrain API key is not set"
+        warn "Skipping upload"
         return 0
-
     fi
 
-
-    local PRODUCT_DIR="out/target/product/${DEVICE}"
-
-    if [[ ! -d "${PRODUCT_DIR}" ]]; then
-
-        warn "Product directory does not exist"
-
+    if [[ -z "${BUILD_ZIP:-}" || ! -f "${BUILD_ZIP}" ]]; then
+        warn "No valid build artifact"
         return 0
-
     fi
 
+    info "Uploading: $(basename "${BUILD_ZIP}")"
 
-    local ROM_ZIP
+    local response
 
+    response=$(
+        curl -fsS \
+            --max-time 3600 \
+            -T "${BUILD_ZIP}" \
+            -u ":${PIXELDRAIN_API_KEY}" \
+            "https://pixeldrain.com/api/file"
+    )
 
-    ROM_ZIP=$(find "${PRODUCT_DIR}" \
-        -maxdepth 1 \
-        -type f \
-        -name "*.zip" \
-        ! -name "*target_files*" \
-        ! -name "*ota*" \
-        -printf '%T@ %p\n' |
-        sort -nr |
-        head -n1 |
-        cut -d' ' -f2-)
+    local file_id
 
+    file_id=$(echo "${response}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
 
-    if [[ -z "${ROM_ZIP}" ]]; then
+    if [[ -n "${file_id}" ]]; then
+        local url="https://pixeldrain.com/u/${file_id}"
 
-        warn "No ROM ZIP found for upload"
+        ok "PixelDrain upload completed"
+        info "${url}"
 
-        send_telegram \
-            "⚠️ ${ROM_NAME}
+        telegram_message \
+            "📦 *Shinkai build completed*
 
-Build completed but no ROM ZIP was found for PixelDrain upload."
+Device: \`${DEVICE}\`
+Branch: \`${ROM_BRANCH}\`
 
-        return 0
+Artifact:
+\`$(basename "${BUILD_ZIP}")\`
 
+PixelDrain:
+${url}"
+
+    else
+        warn "PixelDrain upload finished but file ID could not be detected"
+        telegram_message \
+            "📦 *Shinkai build completed*
+
+Device: \`${DEVICE}\`
+Branch: \`${ROM_BRANCH}\`
+
+Artifact:
+\`$(basename "${BUILD_ZIP}")\`
+
+PixelDrain upload response received."
     fi
-
-
-    local FILE_NAME
-    local FILE_SIZE
-
-
-    FILE_NAME=$(basename "${ROM_ZIP}")
-    FILE_SIZE=$(du -h "${ROM_ZIP}" | cut -f1)
-
-
-    info "File: ${FILE_NAME}"
-    info "Size: ${FILE_SIZE}"
-    info "Uploading..."
-
-
-    send_telegram \
-        "⬆️ Uploading ${ROM_NAME}
-
-File: ${FILE_NAME}
-Size: ${FILE_SIZE}
-Destination: PixelDrain"
-
-
-    local RESPONSE
-
-
-    RESPONSE=$(curl \
-        --fail-with-body \
-        --progress-bar \
-        --max-time 0 \
-        -X POST \
-        -u ":${PIXELDRAIN_API_KEY}" \
-        -F "file=@${ROM_ZIP}" \
-        "https://pixeldrain.com/api/file/")
-
-
-    local FILE_ID
-
-
-    FILE_ID=$(echo "${RESPONSE}" |
-        sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-
-
-    if [[ -z "${FILE_ID}" ]]; then
-
-        fail "PixelDrain upload failed"
-
-        echo "${RESPONSE}"
-
-
-        send_telegram \
-            "❌ PixelDrain upload failed
-
-File: ${FILE_NAME}
-Device: ${DEVICE}"
-
-        return 0
-
-    fi
-
-
-    local PIXELDRAIN_URL
-
-    PIXELDRAIN_URL="https://pixeldrain.com/u/${FILE_ID}"
-
-
-    ok "PixelDrain upload successful"
-
-    info "File ID: ${FILE_ID}"
-    info "URL: ${PIXELDRAIN_URL}"
-
-
-    send_telegram \
-        "📦 ${ROM_NAME} uploaded successfully
-
-Device: ${DEVICE}
-File: ${FILE_NAME}
-Size: ${FILE_SIZE}
-
-🔗 ${PIXELDRAIN_URL}"
-
-
-    export PIXELDRAIN_URL
 }
 
-
 # ============================================================
-# FINISH
+# Finish
 # ============================================================
 
 finish() {
+    local build_end
+    build_end=$(date +%s)
 
-    local JOB_END
-    local JOB_SECONDS
-    local JOB_MINUTES
+    local duration=$((build_end - BUILD_START))
+    local minutes=$((duration / 60))
+    local seconds=$((duration % 60))
 
+    section "Build Complete"
 
-    JOB_END=$(date +%s)
+    ok "Shinkai build completed"
+    info "Device : ${DEVICE}"
+    info "Branch : ${ROM_BRANCH}"
+    info "Time   : ${minutes}m ${seconds}s"
 
-    JOB_SECONDS=$((JOB_END - JOB_START))
-    JOB_MINUTES=$((JOB_SECONDS / 60))
-
-
-    section "Job Complete"
-
-
-    if [[ "${BUILD}" == "true" ]]; then
-
-        ok "${ROM_NAME} build completed"
-
-    else
-
-        ok "${ROM_NAME} source sync completed"
-
-    fi
-
-
-    info "Device: ${DEVICE}"
-    info "Branch: ${ROM_BRANCH}"
-    info "Total time: ${JOB_MINUTES} minutes"
-
-
-    echo
-
-
-    if [[ "${BUILD}" == "false" ]]; then
-
-        echo -e "${GREEN}${BOLD}"
-
-        echo "╔════════════════════════════════════════════════════════════╗"
-        echo "║                                                            ║"
-        echo "║              SHINKAI SYNC COMPLETE                         ║"
-        echo "║                                                            ║"
-        echo "╚════════════════════════════════════════════════════════════╝"
-
-        echo -e "${RESET}"
-
-
-        echo
-
-        info "Source is ready."
-        info "Next: adapt/clone the Courbet device trees."
-
-
-        send_telegram \
-            "📥 ${ROM_NAME} sync complete
-
-Device: ${DEVICE}
-Branch: ${ROM_BRANCH}
-
-Source is ready for device tree adaptation."
-
-
-    else
-
-        echo -e "${GREEN}${BOLD}"
-
-        echo "╔════════════════════════════════════════════════════════════╗"
-        echo "║                                                            ║"
-        echo "║                 SHINKAI COMPLETE                           ║"
-        echo "║                                                            ║"
-        echo "╚════════════════════════════════════════════════════════════╝"
-
-        echo -e "${RESET}"
-
+    if [[ -n "${BUILD_ZIP:-}" ]]; then
+        info "Output : ${BUILD_ZIP}"
     fi
 }
 
-
 # ============================================================
-# MAIN
-# ============================================================
-
-banner
-
-check_dependencies
-check_crave
-check_workspace
-
-check_telegram
-check_pixeldrain
-
-JOB_START=$(date +%s)
-
-notify_start
-
-repo_init
-sync_source
-
-
-# ============================================================
-# SYNC ONLY MODE
+# Main
 # ============================================================
 
-if [[ "${BUILD}" != "true" ]]; then
+main() {
+    section "SHINKAI PROJECT"
 
+    echo "Device : Xiaomi Mi 11 Lite 4G / ${DEVICE}"
+    echo "Branch : ${ROM_BRANCH}"
+    echo "Variant: ${BUILD_VARIANT}"
+    echo "Target : m shinkai"
+    echo "Server : Crave"
+
+    check_dependencies
+    check_crave
+    check_workspace
+
+    telegram_message \
+        "📥 *Shinkai build job started*
+
+Device: \`${DEVICE}\`
+Branch: \`${ROM_BRANCH}\`
+Variant: \`${BUILD_VARIANT}\`"
+
+    repo_init
+    sync_source
+    clone_trees
+    build_rom
+    find_build_output
+    upload_pixeldrain
     finish
+}
 
-    exit 0
-
-fi
-
-
-# ============================================================
-# BUILD MODE
-# ============================================================
-
-clone_trees
-
-check_trees
-
-setup_build_environment
-
-breakfast_device
-
-build_rom
-
-find_artifact
-
-upload_pixeldrain
-
-finish
+main "$@"
